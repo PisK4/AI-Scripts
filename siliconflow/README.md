@@ -12,19 +12,19 @@
 
 1. 确保您已安装Python 3.6或更高版本
 
-2. 安装必要的依赖库：
+1. 安装必要的依赖库：
 
-```bash
-pip install python-dotenv requests pypinyin pydub
-```
+   ```bash
+   pip install python-dotenv requests pypinyin pydub
+   ```
 
-3. 创建`.env`文件，设置必要的API密钥：
+1. 创建`.env`文件，设置必要的API密钥：
 
-```
-SILICONFLOW_API_KEY=您的SiliconFlow_API密钥
-```
+   ```text
+   SILICONFLOW_API_KEY=您的SiliconFlow_API密钥
+   ```
 
-4. 确保安装了`ffmpeg`，用于音频格式转换和处理
+1. 确保安装了`ffmpeg`，用于音频格式转换和处理
 
 ### 依赖说明
 
@@ -63,11 +63,13 @@ python STT/audio_transcription.py -d <音频目录路径>
 获取SiliconFlow平台上可用的所有语音列表，并保存为JSON文件。
 
 **使用方法**：
+
 ```bash
 python TTS/voice_fetch.py
 ```
 
 **功能**：
+
 - 调用SiliconFlow API获取所有可用语音
 - 将结果保存到`voices.json`文件中
 - 支持从`.env`文件读取API密钥，增强安全性
@@ -95,6 +97,50 @@ python TTS/voice_upload.py <音频文件路径> <自定义语音名称> [<朗读
 - 将音频转换为Base64格式上传
 - 自动处理中文名称，转换为拼音
 - 返回可用于TTS的语音URI
+
+#### 2.3 语音生成工具 (voice_create.py/voice_create.sh)
+
+使用SiliconFlow API将文本转换为语音并保存为音频文件，提供Python和Shell两种实现。
+
+**Python版本使用方法**：
+
+```bash
+# 列出可用语音
+python TTS/voice_create.py -l
+
+# 生成语音（使用语音URI）
+python TTS/voice_create.py -o hello.mp3 "你好，世界" -v "speech:2B:ag5cthth2f:kvfcdsgyrbcyruvitvvp"
+
+# 生成语音（使用语音名称）
+python TTS/voice_create.py -o hello.mp3 "你好，世界" -v "2B"
+
+# 调整语速和采样率
+python TTS/voice_create.py -s 1.2 -r 44100 "快速语音测试" -v "2B" -o fast.mp3
+```
+
+**Shell版本使用方法**：
+
+```bash
+# 显示帮助信息
+bash TTS/voice_create.sh --help
+
+# 生成语音
+bash TTS/voice_create.sh "你好，世界" "speech:2B:ag5cthth2f:kvfcdsgyrbcyruvitvvp"
+
+# 指定输出文件和语速
+bash TTS/voice_create.sh -o hello.mp3 -s 1.2 "你好，世界" "speech:2B:ag5cthth2f:kvfcdsgyrbcyruvitvvp"
+
+# 使用流式模式（适合较长文本）
+bash TTS/voice_create.sh --stream "这是一段较长的文本..." "speech:2B:ag5cthth2f:kvfcdsgyrbcyruvitvvp"
+```
+
+**功能特点**：
+
+- 支持指定语音模型、语速、采样率等参数
+- Python版本支持直接使用语音名称而非URI
+- 支持mp3和wav输出格式
+- 提供帮助信息和详细的错误提示
+- Shell版本支持流式模式，适合生成较长的语音
 
 **功能**：
 
@@ -182,7 +228,7 @@ python rename_audio_files.py <目录路径> --recursive
 
 ## 项目结构
 
-```
+```text
 siliconflow/
 ├─ .env                     # 环境变量配置文件
 ├─ stt_to_tts.py            # 语音转文本并上传的一体化工具
@@ -193,6 +239,8 @@ siliconflow/
 ├─ TTS/                     # 语音合成工具目录
 │   ├─ voice_fetch.py         # 获取语音列表工具
 │   ├─ voice_upload.py        # 上传自定义语音工具
+│   ├─ voice_create.py        # 语音生成工具(Python版)
+│   ├─ voice_create.sh        # 语音生成工具(Shell版)
 │   └─ voice_upload.sh        # 旧版上传脚本(已被Python版本替代)
 ├─ audios/                   # 音频文件目录
 │   └─ CN素材/              # 中文音频文件集
