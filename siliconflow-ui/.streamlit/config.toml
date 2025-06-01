@@ -1,0 +1,24 @@
+[theme]
+# 基础主题："light"表示浅色模式，类似苹果的设计风格
+base = "light"
+
+# 主色调：接近苹果的蓝色
+primaryColor = "#0071e3"
+
+# 背景色：纯白色背景
+backgroundColor = "#ffffff"
+
+# 次要背景色：用于卡片和控件的浅灰色
+secondaryBackgroundColor = "#f5f5f7"
+
+# 文本颜色：深灰色，不是纯黑
+textColor = "#1d1d1f"
+
+# 链接颜色：与主色调一致
+linkColor = "#0071e3"
+
+# 代码背景色：稍微暗一点的灰色
+codeBackgroundColor = "#f0f0f0"
+
+# 字体：苹果风格的无衬线字体
+font = "sans-serif"

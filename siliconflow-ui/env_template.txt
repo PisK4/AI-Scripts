@@ -1,0 +1,7 @@
+# SiliconFlow API配置
+# 请复制此文件为.env文件，并添加您的API密钥
+
+# SiliconFlow API密钥
+SILICONFLOW_API_KEY=您的API密钥
+
+# 注意：请保持.env文件的私密性，不要将其提交到版本控制系统
