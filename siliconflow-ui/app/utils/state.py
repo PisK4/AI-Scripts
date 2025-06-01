@@ -41,7 +41,7 @@ class StateManager:
                 "selected_voice": None,
                 "text_input": "",
                 "speed": 1.0,
-                "sample_rate": 24000,
+                "sample_rate": 44100,
                 "generated_audio": None
             }
         
@@ -113,7 +113,7 @@ class StateManager:
                 "selected_voice": None,
                 "text_input": "",
                 "speed": 1.0,
-                "sample_rate": 24000,
+                "sample_rate": 44100,
                 "generated_audio": None
             }
         elif state_name == "voice_state":

@@ -251,7 +251,7 @@ with tab1:
                                     # 提供测试按钮
                                     if st.button("测试生成的语音"):
                                         # 在多页面应用结构中使用URL导航而非state
-                                        st.switch_page("pages/text_to_speech.py")
+                                        st.switch_page("3_text_to_speech.py")
                                 else:
                                     st.error("创建语音失败，请检查音频样本和API连接")
                             except Exception as e:
@@ -361,7 +361,7 @@ with tab1:
                                         # 提供测试按钮
                                         if st.button("测试生成的语音"):
                                             # 在多页面应用结构中使用URL导航而非state
-                                            st.switch_page("pages/text_to_speech.py")
+                                            st.switch_page("3_text_to_speech.py")
                                     else:
                                         st.error("创建语音失败，请检查音频样本和API连接")
                                 except Exception as e:
@@ -493,7 +493,7 @@ with tab2:
                             # 设置为当前选中的语音
                             st.session_state.tts_state["selected_voice"] = selected_voice_id
                             # 跳转到TTS页面
-                            st.switch_page("pages/text_to_speech.py")
+                            st.switch_page("3_text_to_speech.py")
                     
                     with col2:
                         # 删除语音按钮 (当前版本的API可能不支持删除操作)

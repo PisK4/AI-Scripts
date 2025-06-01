@@ -149,16 +149,17 @@ class SiliconFlowAPI:
             error_message = f"上传语音失败: {response.status_code} - {response.text}"
             raise Exception(error_message)
     
-    def create_speech(self, text, voice_uri, speed=1.0, sample_rate=24000, output_format="mp3", stream=False):
+    def create_speech(self, text, voice, speed=1.0, sample_rate=44100, output_format="mp3", stream=False, model="FunAudioLLM/CosyVoice2-0.5B"):
         """
         生成语音
         参数:
             text: 要转换为语音的文本
-            voice_uri: 语音URI或名称
+            voice: 语音URI或名称
             speed: 语音速度，默认1.0
-            sample_rate: 采样率，默认24000
+            sample_rate: 采样率，默认44100
             output_format: 输出格式，默认mp3
             stream: 是否使用流式模式，适合长文本
+            model: 语音模型，默认为 CosyVoice2-0.5B
         返回:
             二进制音频数据
         """
@@ -170,11 +171,11 @@ class SiliconFlowAPI:
         # 使用input字段而不是text字段，符合最新API格式
         data = {
             "input": text,  # 关键变化：使用input字段
-            "voice": voice_uri,
+            "voice": voice,
             "speed": speed,
             "sample_rate": sample_rate,
             "response_format": output_format,  # 关键变化：使用response_format而不是format
-            "model": "FunAudioLLM/CosyVoice2-0.5B",
+            "model": model,
             "stream": stream  # 添加stream参数
         }
         
@@ -188,7 +189,7 @@ class SiliconFlowAPI:
             error_message = f"生成语音失败: {response.status_code} - {response.text}"
             raise Exception(error_message)
     
-    def save_speech_to_file(self, text, voice_uri, output_path, speed=1.0, sample_rate=24000, stream=False):
+    def save_speech_to_file(self, text, voice_uri, output_path, speed=1.0, sample_rate=44100, stream=False, model="FunAudioLLM/CosyVoice2-0.5B"):
         """
         生成语音并保存到文件
         参数:
@@ -196,8 +197,9 @@ class SiliconFlowAPI:
             voice_uri: 语音URI或名称
             output_path: 输出文件路径
             speed: 语音速度，默认1.0
-            sample_rate: 采样率，默认24000
+            sample_rate: 采样率，默认44100
             stream: 是否使用流式模式，适合长文本
+            model: 语音模型，默认为 CosyVoice2-0.5B
         返回:
             输出文件路径
         """
@@ -210,11 +212,12 @@ class SiliconFlowAPI:
         # 生成语音
         audio_data = self.create_speech(
             text=text,
-            voice_uri=voice_uri,
+            voice=voice_uri,
             speed=speed,
             sample_rate=sample_rate,
             output_format=output_format,
-            stream=stream
+            stream=stream,
+            model=model
         )
         
         # 保存到文件

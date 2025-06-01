@@ -340,7 +340,7 @@ def show_step_3(voice_options):
                     voice_uri=selected_voice,
                     output_path=str(output_path),
                     speed=speed,
-                    sample_rate=24000,  # 使用固定采样率
+                    sample_rate=44100,  # 使用固定采样率
                     stream=use_stream
                 )
                 
