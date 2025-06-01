@@ -217,7 +217,7 @@ with col2:
     sample_rate = st.select_slider(
         "采样率",
         options=[8000, 16000, 22050, 24000, 44100, 48000],
-        value=st.session_state.tts_state.get("sample_rate", 24000),
+        value=st.session_state.tts_state.get("sample_rate", 44100),
         help="采样率越高，音质越好，但文件更大"
     )
     

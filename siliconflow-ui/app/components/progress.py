@@ -248,3 +248,11 @@ class MultiStageProgress:
             # 将后续阶段标记为跳过
             for i in range(stage_index + 1, len(self.stage_containers)):
                 self._update_stage_status(i, "⏭️")
+    
+    def clear(self):
+        """清除进度显示"""
+        # 将所有容器清空
+        for container in self.stage_containers:
+            container["status"].empty()
+            container["progress"].empty()
+            container["percentage"].empty()

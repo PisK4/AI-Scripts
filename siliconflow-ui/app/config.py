@@ -55,6 +55,21 @@ def get_api_key():
     
     return api_key
 
+def get_api_url():
+    """获取SiliconFlow API URL"""
+    # 先尝试从环境变量获取
+    api_url = os.getenv("SILICONFLOW_API_URL")
+    if not api_url:
+        # 尝试加载.env文件
+        if load_env_config():
+            api_url = os.getenv("SILICONFLOW_API_URL")
+    
+    # 如果仍然没有，使用默认值
+    if not api_url:
+        api_url = "https://api.siliconflow.cn"
+    
+    return api_url
+
 # 支持的音频格式
 SUPPORTED_AUDIO_FORMATS = ["mp3", "wav", "ogg", "flac", "m4a"]
 
