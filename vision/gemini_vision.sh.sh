@@ -4,7 +4,7 @@
 # 1. 将你的 Google API Key 粘贴到引号内
 # 2. 或者，脚本会尝试从环境变量 GOOGLE_API_KEY 读取
 # 3. 如果上面两者都没有，脚本会提示你输入
-API_KEY="AIzaSyDHXN8YZGfuqIuz8SkXOniOx019tYWHbMs"
+API_KEY=""
 
 # 模型名称
 MODEL_NAME="gemini-2.0-flash"

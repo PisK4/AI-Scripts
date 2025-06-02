@@ -2,22 +2,28 @@
 # -*- coding: utf-8 -*-
 
 """
-SiliconFlow语音工具集 - 自定义语音页面
-允许用户上传音频样本创建个性化语音模型
+SiliconFlow语音工具集 - 简易自定义语音页面
+允许用户只用一段音频、一个名称和文本即可创建个性化语音模型
 """
 
 import os
 import streamlit as st
 import tempfile
 import time
-import pandas as pd
 import sys
+import base64
+import re
+import json
+import requests
+import wave
+import math
+import shutil
 from pathlib import Path
 
 # 设置页面配置
 st.set_page_config(
-    page_title="自定义语音 - SiliconFlow语音工具集",
-    page_icon="🗣️",
+    page_title="简易自定义语音 - SiliconFlow语音工具集",
+    page_icon="🎙️",
     layout="wide"
 )
 
@@ -29,17 +35,17 @@ sys.path.append(str(ROOT_DIR / "app"))
 # 导入工具模块
 from app.utils.state import StateManager
 from app.utils.api import SiliconFlowAPI
-from app.config import get_api_key, AUDIO_DIR
-from app.components.file_uploader import audio_uploader, multi_audio_uploader
+from app.config import get_api_key
+from app.components.file_uploader import audio_uploader
 from app.components.audio_player import enhanced_audio_player
-from app.components.progress import VoiceUploadProgress
+from app.components.progress import MultiStageProgress
 
-# 加载自定义CSS样式 - 苹果设计风格
+# 加载自定义CSS样式
 def load_css_file(css_file_path):
     with open(css_file_path, 'r') as f:
         return f.read()
 
-# 尝试加载自定义CSS文件，如果存在的话
+# 加载苹果风格CSS
 custom_css_path = ROOT_DIR / ".streamlit" / "style.css"
 if custom_css_path.exists():
     custom_css = load_css_file(custom_css_path)
@@ -48,494 +54,510 @@ if custom_css_path.exists():
 # 初始化会话状态
 StateManager.initialize_session_state()
 
+# 初始化自定义语音状态
+if "custom_voice_state" not in st.session_state:
+    st.session_state.custom_voice_state = {
+        "voice_name": "",
+        "reading_text": "在一无所知中, 梦里的一天结束了，一个新的轮回便会开始",
+        "created_voice_id": None,
+        "created_voice_name": None,
+        "success": False,
+        "audio_chunks": [],         # 存储分割后的音频片段
+        "chunk_transcriptions": [], # 存储每个片段的转录文本
+        "selected_chunk_index": None, # 用户选择的片段索引
+        "processing_stage": "upload"  # 当前处理阶段: upload, segment, select, create
+    }
+
 # 初始化API连接
 @st.cache_resource(show_spinner="正在连接SiliconFlow API...")
 def init_api():
-    """初始化API连接，使用缓存避免重复初始化"""
-    try:
-        api = SiliconFlowAPI()
-        # 尝试连接API
-        connected, message = api.test_connection()
-        
-        # 更新API状态
-        StateManager.set_api_status(connected, message)
-        
-        # 如果连接成功，获取并缓存语音列表
-        if connected:
-            try:
-                # 主动获取语音列表
-                voices = api.get_voices()
-                StateManager.update_voices_list(voices)
-            except Exception as e:
-                st.warning(f"获取语音列表失败: {str(e)}")
-        else:
-            st.error(f"API连接失败: {message}")
-            
-        return api
-    except Exception as e:
-        error_msg = f"API初始化失败: {str(e)}"
-        StateManager.set_api_status(False, error_msg)
-        st.error(error_msg)
-        return None
-
-# 在页面加载时初始化API
-api = init_api()
-
-# 在侧边栏显示API状态信息
-with st.sidebar:
-    st.title("SiliconFlow语音工具集")
-    
-    # 检查API状态
-    api_key = get_api_key()
-    api_status = StateManager.get_api_status()
-    
-    if api_key:
-        # 显示API状态
-        if api_status["connected"]:
-            st.success("✅ API连接正常")
-        else:
-            st.error(f"❌ API连接失败: {api_status['message']}")
-    else:
-        st.error("❌ 未找到API密钥")
-        st.info("请返回首页设置API密钥")
-
-# 缓存API客户端
-@st.cache_resource
-def get_api_client():
-    """获取API客户端实例"""
     return SiliconFlowAPI()
 
+# 检查API连接
+def check_api_connection():
+    api = init_api()
+    connected, message = api.test_connection()
+    StateManager.set_api_status(connected, message)
+    return connected, message, api
+
+# 显示API状态
+def show_api_status():
+    status = st.session_state.get('api_status', {'connected': False, 'message': '未连接'})
+    if status['connected']:
+        st.success(f"API状态: {status['message']}")
+        return True
+    else:
+        st.error(f"API状态: {status['message']}")
+        with st.expander("查看API密钥配置帮助"):
+            st.code("""
+# 在项目根目录创建.env文件，内容如下：
+SILICONFLOW_API_KEY=your_api_key_here
+            """)
+        return False
+
+# 音频分割函数
+def split_audio_into_chunks(audio_path, chunk_length_seconds=10):
+    """
+    将WAV音频文件分割成多个固定长度的片段
+    
+    参数:
+        audio_path: 音频文件路径
+        chunk_length_seconds: 每个片段的长度(秒)，默认10秒
+        
+    返回:
+        temp_chunk_files: 临时文件路径列表
+    """
+    # 创建临时目录存储分割的文件
+    temp_dir = tempfile.mkdtemp()
+    
+    # 将上传的文件先转换为wav格式
+    temp_wav_path = os.path.join(temp_dir, "temp_audio.wav")
+    
+    # 如果不是wav文件，使用ffmpeg转换
+    file_ext = os.path.splitext(audio_path)[1].lower()
+    if file_ext != ".wav":
+        try:
+            # 尝试使用ffmpeg如果存在
+            os.system(f'ffmpeg -i "{audio_path}" "{temp_wav_path}" -y')
+            # 更新音频路径为转换后的文件
+            audio_path = temp_wav_path
+        except Exception as e:
+            st.error(f"转换音频格式失败: {str(e)}")
+            # 如果转换失败，保留原始音频文件
+            shutil.copy(audio_path, temp_wav_path)
+            audio_path = temp_wav_path
+    else:
+        # 如果已经是wav文件，直接复制
+        shutil.copy(audio_path, temp_wav_path)
+        audio_path = temp_wav_path
+    
+    # 读取WAV文件信息
+    try:
+        with wave.open(audio_path, 'rb') as wav_file:
+            n_channels = wav_file.getnchannels()
+            sample_width = wav_file.getsampwidth()
+            framerate = wav_file.getframerate()
+            n_frames = wav_file.getnframes()
+            comp_type = wav_file.getcomptype()
+            comp_name = wav_file.getcompname()
+            
+            # 计算每个片段的帧数
+            frames_per_chunk = int(chunk_length_seconds * framerate)
+            total_chunks = math.ceil(n_frames / frames_per_chunk)
+            
+            # 分割并保存每个片段
+            temp_chunk_files = []
+            for i in range(total_chunks):
+                # 创建片段文件路径
+                chunk_path = os.path.join(temp_dir, f"chunk_{i}.wav")
+                
+                # 定位到当前片段开始位置
+                wav_file.setpos(i * frames_per_chunk)
+                
+                # 读取当前片段的数据
+                # 如果是最后一个片段，可能会少于指定的帧数
+                remaining_frames = n_frames - (i * frames_per_chunk)
+                current_chunk_frames = min(frames_per_chunk, remaining_frames)
+                frames = wav_file.readframes(current_chunk_frames)
+                
+                # 创建新的WAV文件存储片段
+                with wave.open(chunk_path, 'wb') as chunk_file:
+                    chunk_file.setnchannels(n_channels)
+                    chunk_file.setsampwidth(sample_width)
+                    chunk_file.setframerate(framerate)
+                    chunk_file.setcomptype(comp_type, comp_name)
+                    chunk_file.writeframes(frames)
+                
+                temp_chunk_files.append(chunk_path)
+    
+    except Exception as e:
+        # 如果分割失败，至少返回原始文件作为单个片段
+        st.warning(f"音频分割失败: {str(e)}\n返回原始文件作为单个片段")
+        temp_chunk_files = [audio_path]
+    
+    return temp_chunk_files
+
+# 转录音频片段为文本
+def transcribe_audio_chunk(api, chunk_path):
+    """
+    将音频片段转录为文本
+    
+    参数:
+        api: SiliconFlowAPI实例
+        chunk_path: 音频片段路径
+        
+    返回:
+        transcription: 转录结果文本
+    """
+    try:
+        result = api.transcribe_audio(chunk_path)
+        if result and 'text' in result:
+            return result['text']
+        return ""
+    except Exception as e:
+        st.warning(f"转录音频片段出错: {str(e)}")
+        return ""
+
+# 上传自定义语音样本
+def upload_custom_voice(api_key, audio_data, custom_name, text):
+    """上传自定义语音样本到SiliconFlow API"""
+    url = "https://api.siliconflow.cn/v1/uploads/audio/voice"
+    headers = {"Authorization": f"Bearer {api_key}"}
+    
+    # 将音频转换为Base64编码
+    audio_base64 = base64.b64encode(audio_data).decode('utf-8')
+    audio_data_uri = f'data:audio/mpeg;base64,{audio_base64}'
+    
+    # 准备请求数据
+    data = {
+        'audio': audio_data_uri,
+        'customName': custom_name,
+        'text': text,
+        'model': 'FunAudioLLM/CosyVoice2-0.5B'
+    }
+    
+    # 发送请求
+    response = requests.post(url, headers=headers, json=data)
+    
+    if response.status_code == 200:
+        try:
+            return response.json()
+        except json.JSONDecodeError:
+            return {"error": "响应解析失败", "raw": response.text}
+    else:
+        return {"error": f"请求失败: {response.status_code}", "message": response.text}
+
 # 主页面内容
-st.title("🗣️ 自定义语音")
+st.title("🎙️ 简易自定义语音")
+
+# 检查API连接
+connected, message, api = check_api_connection()
+if not show_api_status():
+    st.stop()
 
 st.markdown("""
-在这里，您可以上传自己的声音样本，创建个性化语音模型。上传的样本越多，生成的语音效果越好。
-
-- 支持单个或批量上传音频样本
-- 提供样本质量检查和建议
-- 可以试听生成的语音效果
-- 可管理已创建的自定义语音
+## 一键创建个性化语音模型
+只需三步，即可创建属于你自己的语音模型：
+1. 上传一段你的语音音频（5-10秒）
+2. 为语音输入一个独特的名称
+3. 提供音频所对应的文字内容
 """)
 
-# 创建选项卡
-tab1, tab2 = st.tabs(["创建自定义语音", "管理我的语音"])
-
-# 创建自定义语音选项卡
-with tab1:
-    st.subheader("创建自定义语音")
+# 如果已经成功创建语音，显示成功信息和跳转按钮
+if st.session_state.custom_voice_state.get("success", False):
+    st.success(f"自定义语音 '{st.session_state.custom_voice_state['created_voice_name']}' 创建成功了！")
     
-    # 表单输入基本信息
-    with st.form("voice_info_form"):
-        col1, col2 = st.columns(2)
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("创建新的自定义语音", use_container_width=True):
+            # 重置状态
+            st.session_state.custom_voice_state = {
+                "voice_name": "",
+                "reading_text": "在一无所知中, 梦里的一天结束了，一个新的轮回便会开始",
+                "created_voice_id": None,
+                "created_voice_name": None,
+                "success": False,
+                "audio_chunks": [],
+                "chunk_transcriptions": [],
+                "selected_chunk_index": None,
+                "processing_stage": "upload"
+            }
+            st.rerun()
+    
+    with col2:
+        if st.button("使用这个语音生成音频", type="primary", use_container_width=True):
+            # 跳转到文本转语音页面
+            st.switch_page("3_text_to_speech.py")
+    
+    st.stop()
+
+# 处理不同的阶段
+processing_stage = st.session_state.custom_voice_state["processing_stage"]
+
+# 第一阶段: 上传音频文件
+if processing_stage == "upload":
+    st.subheader("第一步: 上传音频文件")
+    st.info("上传您的语音音频，系统将自动将其分割为多个10秒的片段，并进行转录")
+    
+    # 语音名称输入
+    voice_name = st.text_input(
+        "语音名称 *",
+        value=st.session_state.custom_voice_state["voice_name"],
+        placeholder="为您的语音起个名字，如小明的声音",
+        help="名称将用于标识您的自定义语音模型"
+    )
+    
+    # 音频文件上传
+    st.markdown("⤴️ **上传您的语音样本**")
+    uploaded_file = audio_uploader(
+        "选择一个音频文件",
+        key="simple_voice_upload",
+        help_text="上传您的语音音频文件，将自动分割并转录"
+    )
+    
+    if st.button("下一步: 开始处理音频", type="primary"):
+        if not voice_name:
+            st.error("请输入语音名称")
+        elif not uploaded_file:
+            st.error("请上传语音样本文件")
+        else:
+            # 更新语音名称
+            st.session_state.custom_voice_state["voice_name"] = voice_name
+            
+            # 创建进度指示器
+            progress_stages = [
+                {"name": "处理音频文件", "weight": 0.3},
+                {"name": "分割音频", "weight": 0.3},
+                {"name": "转录音频片段", "weight": 0.4}
+            ]
+            progress = MultiStageProgress(progress_stages, "处理音频中...")
+            
+            try:
+                # 处理上传的音频文件
+                st.info("正在处理音频文件...")
+                progress.update_stage(0, 0.5)
+                
+                # 保存上传的音频文件
+                temp_dir = tempfile.mkdtemp()
+                temp_audio_path = os.path.join(temp_dir, uploaded_file.name)
+                
+                with open(temp_audio_path, "wb") as f:
+                    f.write(uploaded_file.getbuffer())
+                
+                # 更新进度
+                st.info("音频处理完成")
+                progress.update_stage(0, 1.0)
+                
+                # 分割音频
+                st.info("正在将音频分割为10秒片段...")
+                progress.update_stage(1, 0.3)
+                chunk_files = split_audio_into_chunks(temp_audio_path)
+                st.info(f"分割完成，共{len(chunk_files)}个片段")
+                progress.update_stage(1, 1.0)
+                
+                # 转录每个片段
+                st.info("正在转录音频片段...")
+                progress.update_stage(2, 0.2)
+                
+                # 转录每个片段
+                transcriptions = []
+                total_chunks = len(chunk_files)
+                for i, chunk_file in enumerate(chunk_files):
+                    progress_value = 0.2 + 0.8 * ((i + 1) / total_chunks)
+                    st.info(f"正在转录第 {i+1}/{total_chunks} 个片段...")
+                    transcription = transcribe_audio_chunk(api, chunk_file)
+                    transcriptions.append(transcription)
+                    progress.update_stage(2, progress_value)
+                
+                st.info("所有片段转录完成")
+                progress.update_stage(2, 1.0)
+                
+                # 存储结果到会话状态
+                st.session_state.custom_voice_state["audio_chunks"] = chunk_files
+                st.session_state.custom_voice_state["chunk_transcriptions"] = transcriptions
+                st.session_state.custom_voice_state["processing_stage"] = "select"
+                
+                # 重新加载页面显示片段选择界面
+                time.sleep(1)  # 等待进度条显示完成
+                st.rerun()
+                
+            except Exception as e:
+                st.error(f"处理音频时出错: {str(e)}")
+                st.exception(e)
+
+# 第二阶段: 选择片段
+elif processing_stage == "select":
+    st.subheader("第二步: 选择用于自定义语音的片段")
+    st.info("选择一个转录效果最好的片段来创建你的自定义语音模型")
+    
+    # 显示所有片段及其转录文本
+    chunk_files = st.session_state.custom_voice_state["audio_chunks"]
+    transcriptions = st.session_state.custom_voice_state["chunk_transcriptions"]
+    
+    # 创建选择片段的框
+    selected_index = st.radio(
+        "选择一个片段",
+        options=list(range(len(chunk_files))),
+        format_func=lambda i: f"片段 {i+1} (时长约 10 秒)",
+        index=0 if st.session_state.custom_voice_state["selected_chunk_index"] is None else st.session_state.custom_voice_state["selected_chunk_index"]
+    )
+    
+    # 显示选中片段的音频和转录文本
+    if 0 <= selected_index < len(chunk_files):
+        st.subheader(f"片段 {selected_index+1} 预览")
         
+        col1, col2 = st.columns([1, 2])
         with col1:
-            voice_name = st.text_input(
-                "语音名称",
-                placeholder="为您的语音起个名字，如小明的声音",
-                help="名称将显示在语音列表中，便于识别"
-            )
+            st.audio(chunk_files[selected_index])
         
         with col2:
-            # 创建可选的语音描述
-            voice_description = st.text_input(
-                "语音描述（可选）",
-                placeholder="描述这个语音的特点，如男声，温柔",
-                help="描述有助于更好地区分不同语音"
+            # 显示转录文本并允许编辑
+            transcription = st.text_area(
+                "转录文本",
+                value=transcriptions[selected_index],
+                height=100,
+                key=f"transcription_{selected_index}"
             )
-        
-        # 性别选择
-        gender = st.radio(
-            "语音性别",
-            options=["男", "女", "其他"],
-            horizontal=True,
-            help="选择与音频样本相符的性别"
-        )
-        
-        # 提交按钮
-        submit_form = st.form_submit_button("下一步: 上传音频样本")
+            # 更新编辑后的转录文本
+            transcriptions[selected_index] = transcription
+            st.session_state.custom_voice_state["chunk_transcriptions"] = transcriptions
     
-    # 如果表单已提交，继续上传音频
-    if submit_form or st.session_state.voice_state.get("form_submitted", False):
-        # 标记表单已提交
-        st.session_state.voice_state["form_submitted"] = True
-        
-        # 保存表单数据
-        st.session_state.voice_state["voice_name"] = voice_name if submit_form else st.session_state.voice_state.get("voice_name", "")
-        st.session_state.voice_state["voice_description"] = voice_description if submit_form else st.session_state.voice_state.get("voice_description", "")
-        st.session_state.voice_state["gender"] = gender if submit_form else st.session_state.voice_state.get("gender", "男")
-        
-        # 验证表单数据
-        if not st.session_state.voice_state["voice_name"]:
-            st.error("请输入语音名称")
-        else:
-            # 显示上传音频区域
-            st.subheader("上传音频样本")
-            
-            st.markdown("""
-            #### 音频样本要求
-            - 格式: MP3, WAV, FLAC (推荐WAV格式, 44.1kHz采样率)
-            - 时长: 每个样本5秒至10分钟
-            - 数量: 最少5个样本，建议10-20个效果更佳
-            - 质量: 清晰无噪音，尽量使用相同设备录制
-            """)
-            
-            # 选择上传方式
-            upload_method = st.radio(
-                "选择上传方式",
-                options=["批量上传", "单个上传"],
-                horizontal=True,
-                help="批量上传更快，单个上传可预览"
-            )
-            
-            if upload_method == "批量上传":
-                # 批量上传音频文件
-                uploaded_files = multi_audio_uploader(
-                    "选择多个音频文件",
-                    key="voice_batch_upload",
-                    help="同时选择多个音频文件上传"
-                )
-                
-                if uploaded_files:
-                    # 显示已上传的文件列表
-                    st.write(f"已选择 {len(uploaded_files)} 个文件")
-                    
-                    # 创建开始上传按钮
-                    if st.button("开始上传", type="primary"):
-                        # 获取API客户端
-                        api = get_api_client()
-                        
-                        # 创建临时目录
-                        with tempfile.TemporaryDirectory() as temp_dir:
-                            # 初始化进度显示
-                            progress = VoiceUploadProgress()
-                            progress.start_batch(len(uploaded_files))
-                            
-                            # 保存上传的文件到临时目录
-                            file_paths = []
-                            for uploaded_file in uploaded_files:
-                                file_path = os.path.join(temp_dir, uploaded_file.name)
-                                with open(file_path, "wb") as f:
-                                    f.write(uploaded_file.getbuffer())
-                                file_paths.append((file_path, uploaded_file.name))
-                            
-                            # 上传音频样本创建自定义语音
-                            try:
-                                # 转换性别格式
-                                gender_map = {"男": "male", "女": "female", "其他": "other"}
-                                gender_code = gender_map.get(st.session_state.voice_state["gender"], "other")
-                                
-                                # 创建语音
-                                result = api.create_voice(
-                                    name=st.session_state.voice_state["voice_name"],
-                                    description=st.session_state.voice_state["voice_description"] or None,
-                                    gender=gender_code,
-                                    audio_files=file_paths,
-                                    progress_callback=progress.update_file_progress
-                                )
-                                
-                                if result and "voice" in result:
-                                    # 保存语音信息
-                                    voice_info = result["voice"]
-                                    
-                                    # 显示成功信息
-                                    st.success(f"自定义语音创建成功! 语音ID: {voice_info.get('id', '未知')}")
-                                    
-                                    # 显示创建的语音信息
-                                    st.json(voice_info)
-                                    
-                                    # 刷新语音列表
-                                    StateManager.reset_voices_cache()
-                                    voices_list = api.get_voices()
-                                    StateManager.update_voices_list(voices_list)
-                                    
-                                    # 提供测试按钮
-                                    if st.button("测试生成的语音"):
-                                        # 在多页面应用结构中使用URL导航而非state
-                                        st.switch_page("3_text_to_speech.py")
-                                else:
-                                    st.error("创建语音失败，请检查音频样本和API连接")
-                            except Exception as e:
-                                st.error(f"创建语音过程出错: {str(e)}")
+    # 更新选中的片段索引
+    st.session_state.custom_voice_state["selected_chunk_index"] = selected_index
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("返回上一步", use_container_width=True):
+            st.session_state.custom_voice_state["processing_stage"] = "upload"
+            st.rerun()
+    
+    with col2:
+        if st.button("下一步: 创建语音模型", type="primary", use_container_width=True):
+            # 检查选中片段的转录文本是否为空
+            if not transcriptions[selected_index].strip():
+                st.error("选中片段的转录文本不能为空")
             else:
-                # 单个上传
-                uploaded_file = audio_uploader(
-                    "选择一个音频文件",
-                    key="voice_single_upload",
-                    help="选择一个音频文件上传并预览"
-                )
-                
-                if uploaded_file:
-                    # 显示音频预览
-                    st.subheader("音频预览")
-                    enhanced_audio_player(uploaded_file.getvalue(), key="preview_voice_audio")
-                    
-                    # 添加到待上传列表
-                    if "upload_queue" not in st.session_state.voice_state:
-                        st.session_state.voice_state["upload_queue"] = []
-                    
-                    # 检查是否已经在队列中
-                    file_names = [f[1] for f in st.session_state.voice_state["upload_queue"]]
-                    
-                    if uploaded_file.name not in file_names and st.button("添加到上传队列"):
-                        # 保存到临时文件
-                        with tempfile.NamedTemporaryFile(suffix=f'.{uploaded_file.name.split(".")[-1]}', delete=False) as temp_file:
-                            temp_file.write(uploaded_file.getbuffer())
-                            temp_file_path = temp_file.name
-                        
-                        # 添加到队列
-                        st.session_state.voice_state["upload_queue"].append((temp_file_path, uploaded_file.name))
-                        st.success(f"已添加到上传队列: {uploaded_file.name}")
-                        st.rerun()
-                
-                # 显示上传队列
-                if "upload_queue" in st.session_state.voice_state and st.session_state.voice_state["upload_queue"]:
-                    st.subheader("上传队列")
-                    
-                    # 显示队列中的文件
-                    for i, (_, file_name) in enumerate(st.session_state.voice_state["upload_queue"]):
-                        st.write(f"{i+1}. {file_name}")
-                    
-                    # 显示队列操作按钮
-                    col1, col2 = st.columns(2)
-                    
-                    with col1:
-                        if st.button("清空队列"):
-                            # 清除临时文件
-                            for temp_path, _ in st.session_state.voice_state["upload_queue"]:
-                                if os.path.exists(temp_path):
-                                    os.unlink(temp_path)
-                            
-                            # 清空队列
-                            st.session_state.voice_state["upload_queue"] = []
-                            st.success("已清空上传队列")
-                            st.rerun()
-                    
-                    with col2:
-                        if len(st.session_state.voice_state["upload_queue"]) >= 5:
-                            if st.button("开始上传", type="primary"):
-                                # 获取API客户端
-                                api = get_api_client()
-                                
-                                # 初始化进度显示
-                                progress = VoiceUploadProgress()
-                                progress.start_batch(len(st.session_state.voice_state["upload_queue"]))
-                                
-                                # 上传音频样本创建自定义语音
-                                try:
-                                    # 转换性别格式
-                                    gender_map = {"男": "male", "女": "female", "其他": "other"}
-                                    gender_code = gender_map.get(st.session_state.voice_state["gender"], "other")
-                                    
-                                    # 创建语音
-                                    result = api.create_voice(
-                                        name=st.session_state.voice_state["voice_name"],
-                                        description=st.session_state.voice_state["voice_description"] or None,
-                                        gender=gender_code,
-                                        audio_files=st.session_state.voice_state["upload_queue"],
-                                        progress_callback=progress.update_file_progress
-                                    )
-                                    
-                                    if result and "voice" in result:
-                                        # 保存语音信息
-                                        voice_info = result["voice"]
-                                        
-                                        # 显示成功信息
-                                        st.success(f"自定义语音创建成功! 语音ID: {voice_info.get('id', '未知')}")
-                                        
-                                        # 显示创建的语音信息
-                                        st.json(voice_info)
-                                        
-                                        # 刷新语音列表
-                                        StateManager.reset_voices_cache()
-                                        voices_list = api.get_voices()
-                                        StateManager.update_voices_list(voices_list)
-                                        
-                                        # 清除临时文件
-                                        for temp_path, _ in st.session_state.voice_state["upload_queue"]:
-                                            if os.path.exists(temp_path):
-                                                os.unlink(temp_path)
-                                        
-                                        # 清空队列
-                                        st.session_state.voice_state["upload_queue"] = []
-                                        
-                                        # 提供测试按钮
-                                        if st.button("测试生成的语音"):
-                                            # 在多页面应用结构中使用URL导航而非state
-                                            st.switch_page("3_text_to_speech.py")
-                                    else:
-                                        st.error("创建语音失败，请检查音频样本和API连接")
-                                except Exception as e:
-                                    st.error(f"创建语音过程出错: {str(e)}")
-                        else:
-                            st.warning("至少需要5个音频样本才能创建语音")
+                st.session_state.custom_voice_state["reading_text"] = transcriptions[selected_index]
+                st.session_state.custom_voice_state["processing_stage"] = "create"
+                st.rerun()
 
-    # 使用建议
-    with st.expander("录制样本建议", expanded=False):
-        st.markdown("""
-        ### 录制高质量音频样本的建议
+# 第三阶段: 创建自定义语音
+elif processing_stage == "create":
+    st.subheader("第三步: 创建自定义语音模型")
+    
+    # 显示所选片段的预览
+    selected_index = st.session_state.custom_voice_state["selected_chunk_index"]
+    chunk_files = st.session_state.custom_voice_state["audio_chunks"]
+    
+    if 0 <= selected_index < len(chunk_files):
+        st.info(f"您选择了片段 {selected_index+1} 作为自定义语音的样本")
         
-        1. **环境要求**
-           - 选择安静的环境，避免背景噪音
-           - 关闭空调、风扇等会产生持续噪音的设备
-           - 避免混响严重的大房间
+        col1, col2 = st.columns([1, 2])
+        with col1:
+            st.audio(chunk_files[selected_index])
         
-        2. **设备选择**
-           - 使用好的麦克风，可以是手机或电脑的内置麦克风
-           - 保持固定的录音距离，通常10-20厘米较佳
-           - 避免触碰麦克风或震动设备
-        
-        3. **录制内容**
-           - 使用自然的语速和语调朗读文本
-           - 避免过度情感化的表达，保持平稳
-           - 内容应当多样化，包含不同类型的句子
-           - 建议使用中文和英文混合的内容
-        
-        4. **录制技巧**
-           - 每段录音开始前留0.5-1秒空白
-           - 每段录音结束后留0.5-1秒空白
-           - 出现口误时重新录制该片段
-           - 保持一致的音量和语速
-        """)
+        with col2:
+            # 显示最终文本
+            reading_text = st.text_area(
+                "最终文字内容",
+                value=st.session_state.custom_voice_state["reading_text"],
+                height=100
+            )
+            st.session_state.custom_voice_state["reading_text"] = reading_text
+    
+    # 名称确认
+    voice_name = st.text_input(
+        "确认语音名称",
+        value=st.session_state.custom_voice_state["voice_name"]
+    )
+    st.session_state.custom_voice_state["voice_name"] = voice_name
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("返回选择片段", use_container_width=True):
+            st.session_state.custom_voice_state["processing_stage"] = "select"
+            st.rerun()
+    
+    with col2:
+        create_button = st.button("创建语音模型", type="primary", use_container_width=True)
 
-# 管理我的语音选项卡
-with tab2:
-    st.subheader("管理我的语音")
-    
-    # 获取API客户端
-    api = get_api_client()
-    
-    # 刷新按钮
-    if st.button("刷新语音列表"):
-        StateManager.reset_voices_cache()
-        with st.spinner("正在刷新语音列表..."):
-            try:
-                voices_list = api.get_voices()
-                StateManager.update_voices_list(voices_list)
-                st.success("语音列表已刷新")
-            except Exception as e:
-                st.error(f"刷新语音列表失败: {str(e)}")
-    
-    # 获取语音列表
-    voices_list = StateManager.get_voices_list()
-    
-    if not voices_list or "result" not in voices_list:
-        st.warning("未能获取语音列表，请检查API连接")
+# 处理创建语音按钮逻辑
+if processing_stage == "create" and create_button:
+    # 检查必填字段
+    selected_index = st.session_state.custom_voice_state["selected_chunk_index"]
+    if not voice_name:
+        st.error("请输入语音名称")
+    elif not st.session_state.custom_voice_state["reading_text"]:
+        st.error("请输入文字内容")
     else:
-        # 从 result 字段中获取语音列表
-        # 在此处我们假设所有语音都是自定义语音，因为API结构发生了变化
-        custom_voices = voices_list["result"]
+        # 清理名称，去除特殊字符
+        sanitized_name = re.sub(r'[^a-zA-Z0-9_\-\u4e00-\u9fff]', '_', voice_name)
+        sanitized_name = sanitized_name[:64]  # 限制名称长度
         
-        if not custom_voices:
-            st.info("您还没有创建自定义语音，请前往'创建自定义语音'选项卡创建")
-        else:
-            # 创建语音列表数据
-            voice_data = []
-            for voice in custom_voices:
-                # 使用新的API返回数据结构中的字段
-                model = voice.get("model", "未知")  # 添加模型字段
-                voice_data.append({
-                    "ID": voice.get("uri", "未知"),  # 使用uri作为ID
-                    "名称": voice.get("customName", "未知"),  # 使用customName作为名称
-                    "描述": model,  # 将模型名称作为描述
-                    "样本文本": voice.get("text", "")[:30] + "..." if len(voice.get("text", "")) > 30 else voice.get("text", "")
-                })
+        # 获取选中的音频片段路径
+        chunk_files = st.session_state.custom_voice_state["audio_chunks"]
+        selected_audio_path = chunk_files[selected_index]
+        reading_text = st.session_state.custom_voice_state["reading_text"]
+        
+        # 创建进度指示器
+        progress_stages = [
+            {"name": "处理音频片段", "weight": 0.3},
+            {"name": "上传自定义语音", "weight": 0.3},
+            {"name": "生成语音模型", "weight": 0.4}
+        ]
+        progress = MultiStageProgress(progress_stages, "创建自定义语音中...")
+        
+        # 第一阶段：处理音频片段
+        st.info("正在处理选中的音频片段...")
+        progress.update_stage(0, 0.5)
+        
+        try:
+            # 读取选中的音频片段数据
+            with open(selected_audio_path, "rb") as audio_file:
+                audio_data = audio_file.read()
             
-            # 创建数据框
-            df = pd.DataFrame(voice_data)
+            st.info("音频片段处理完成")
+            progress.update_stage(0, 1.0)
             
-            # 显示语音列表
-            st.dataframe(
-                df,
-                column_config={
-                    "ID": st.column_config.TextColumn("ID", width="medium"),
-                    "名称": st.column_config.TextColumn("名称", width="medium"),
-                    "描述": st.column_config.TextColumn("模型", width="medium"),
-                    "样本文本": st.column_config.TextColumn("样本文本", width="large")
-                },
-                hide_index=True,
-                use_container_width=True
-            )
+            # 第二阶段：上传自定义语音
+            st.info("正在上传自定义语音...")
+            progress.update_stage(1, 0.3)
             
-            # 选择要管理的语音
-            selected_voice_id = st.selectbox(
-                "选择要管理的语音",
-                options=[v["ID"] for v in voice_data],
-                format_func=lambda x: next((v["名称"] for v in voice_data if v["ID"] == x), x)
-            )
-            
-            if selected_voice_id:
-                # 获取选中的语音详情
-                selected_voice = next((v for v in custom_voices if v.get("uri") == selected_voice_id), None)
+            # 获取API密钥
+            api_key = get_api_key()
+            if not api_key:
+                st.error("缺少API密钥。请在.env文件中设置SILICONFLOW_API_KEY环境变量。")
+            else:
+                # 上传自定义语音
+                upload_result = upload_custom_voice(api_key, audio_data, sanitized_name, reading_text)
                 
-                if selected_voice:
-                    st.subheader(f"语音详情: {selected_voice.get('customName', '未知')}")
+                # 检查是否有错误
+                if "error" in upload_result:
+                    st.error(f"上传失败: {upload_result['error']}")
+                    if 'message' in upload_result:
+                        st.text(upload_result['message'])
+                else:
+                    st.info("自定义语音上传成功")
+                    progress.update_stage(1, 1.0)
                     
-                    # 显示语音信息
-                    col1, col2 = st.columns(2)
+                    # 第三阶段：等待语音模型生成
+                    st.info("正在生成语音模型...")
+                    progress.update_stage(2, 0.5)
                     
-                    with col1:
-                        st.write(f"ID: {selected_voice.get('uri', '未知')}")
-                        st.write(f"名称: {selected_voice.get('customName', '未知')}")
-                        st.write(f"模型: {selected_voice.get('model', '未知')}")
+                    # 提取自定义语音ID和名称
+                    custom_voice_id = None
+                    if "result" in upload_result and "customName" in upload_result["result"]:
+                        custom_voice_name = upload_result["result"]["customName"]
+                        # 如果有ID信息，也提取
+                        if "id" in upload_result["result"]:
+                            custom_voice_id = upload_result["result"]["id"]
+                    else:
+                        # 如果结果结构不符合预期，使用输入的名称
+                        custom_voice_name = sanitized_name
                     
-                    with col2:
-                        # 显示样本文本
-                        sample_text = selected_voice.get('text', '')
-                        st.write(f"样本文本: {sample_text[:100]}{'...' if len(sample_text) > 100 else ''}")
+                    # 保存结果到会话状态
+                    st.session_state.custom_voice_state["created_voice_id"] = custom_voice_id
+                    st.session_state.custom_voice_state["created_voice_name"] = custom_voice_name
+                    st.session_state.custom_voice_state["success"] = True
+                    st.session_state.custom_voice_state["processing_stage"] = "upload"  # 重置为首页
                     
-                    # 操作按钮
-                    st.subheader("操作")
+                    # 完成最后阶段
+                    st.info("语音模型生成成功")
+                    progress.update_stage(2, 1.0)
                     
-                    col1, col2 = st.columns(2)
-                    
-                    with col1:
-                        if st.button("使用此语音生成语音"):
-                            # 设置为当前选中的语音
-                            st.session_state.tts_state["selected_voice"] = selected_voice_id
-                            # 跳转到TTS页面
-                            st.switch_page("3_text_to_speech.py")
-                    
-                    with col2:
-                        # 删除语音按钮 (当前版本的API可能不支持删除操作)
-                        if st.button("删除此语音", type="secondary", disabled=True):
-                            st.warning("当前版本不支持删除语音操作")
-                    
-                    # 测试语音
-                    st.subheader("测试语音")
-                    
-                    test_text = st.text_area(
-                        "输入测试文本",
-                        value="这是一段测试文本，用于测试自定义语音的效果。",
-                        height=100
-                    )
-                    
-                    if st.button("生成测试音频"):
-                        if test_text:
-                            try:
-                                # 显示处理进度
-                                with st.spinner("正在生成测试音频..."):
-                                    # 生成测试音频
-                                    audio_bytes = api.create_speech(
-                                        text=test_text,
-                                        voice=selected_voice_id,
-                                        model="FunAudioLLM/CosyVoice2-0.5B"  # 使用默认模型
-                                    )
-                                
-                                # 显示音频播放器
-                                if audio_bytes:
-                                    st.success("测试音频生成成功")
-                                    st.audio(audio_bytes, format="audio/mp3")
-                                    
-                                    # 保存按钮
-                                    st.download_button(
-                                        label="下载测试音频",
-                                        data=audio_bytes,
-                                        file_name=f"test_{selected_voice.get('customName', 'voice')}.mp3",
-                                        mime="audio/mp3"
-                                    )
-                                else:
-                                    st.error("生成测试音频失败")
-                            except Exception as e:
-                                st.error(f"生成音频时出错: {str(e)}")
-                        else:
-                            st.warning("请输入测试文本")
+                    # 显示成功信息
+                    time.sleep(1)  # 等待进度条显示完成
+                    st.rerun()  # 重新加载页面显示成功信息
+        except Exception as e:
+            # 处理异常
+            st.error(f"创建自定义语音时出错: {str(e)}")
+            st.exception(e)
+        finally:
+            # 清理临时文件
+            try:
+                if os.path.exists(temp_dir):
+                    import shutil
+                    shutil.rmtree(temp_dir)
+            except Exception as e:
+                st.warning(f"清理临时文件时出错: {str(e)}")
+
