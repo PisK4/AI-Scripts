@@ -99,6 +99,7 @@ SILICONFLOW_API_KEY=your_api_key_here
 def split_audio_into_chunks(audio_path, chunk_length_seconds=10):
     """
     将WAV音频文件分割成多个固定长度的片段
+    如果文件小于5MB，则不进行切割
     
     参数:
         audio_path: 音频文件路径
@@ -107,6 +108,12 @@ def split_audio_into_chunks(audio_path, chunk_length_seconds=10):
     返回:
         temp_chunk_files: 临时文件路径列表
     """
+    # 检查文件大小，如果小于5MB则不进行切割
+    file_size = os.path.getsize(audio_path)
+    if file_size < 5 * 1024 * 1024:  # 5MB = 5 * 1024 * 1024 字节
+        st.info(f"音频文件大小为 {file_size / (1024 * 1024):.2f}MB，小于5MB，无需切割")
+        return [audio_path]
+        
     # 创建临时目录存储分割的文件
     temp_dir = tempfile.mkdtemp()
     

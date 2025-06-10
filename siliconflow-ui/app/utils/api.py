@@ -149,7 +149,7 @@ class SiliconFlowAPI:
             error_message = f"上传语音失败: {response.status_code} - {response.text}"
             raise Exception(error_message)
     
-    def create_speech(self, text, voice, speed=1.0, sample_rate=44100, output_format="mp3", stream=False, model="FunAudioLLM/CosyVoice2-0.5B"):
+    def create_speech(self, text, voice, speed=1.0, sample_rate=44100, gain=0, output_format="mp3", stream=False, model="FunAudioLLM/CosyVoice2-0.5B"):
         """
         生成语音
         参数:
@@ -160,6 +160,7 @@ class SiliconFlowAPI:
             output_format: 输出格式，默认mp3
             stream: 是否使用流式模式，适合长文本
             model: 语音模型，默认为 CosyVoice2-0.5B
+            gain: 增益，默认0, 范围-10 到 10
         返回:
             二进制音频数据
         """
@@ -176,6 +177,7 @@ class SiliconFlowAPI:
             "sample_rate": sample_rate,
             "response_format": output_format,  # 关键变化：使用response_format而不是format
             "model": model,
+            "gain": gain,
             "stream": stream  # 添加stream参数
         }
         
@@ -189,7 +191,7 @@ class SiliconFlowAPI:
             error_message = f"生成语音失败: {response.status_code} - {response.text}"
             raise Exception(error_message)
     
-    def save_speech_to_file(self, text, voice_uri, output_path, speed=1.0, sample_rate=44100, stream=False, model="FunAudioLLM/CosyVoice2-0.5B"):
+    def save_speech_to_file(self, text, voice_uri, output_path, speed=1.0, gain=0, sample_rate=44100, stream=False, model="FunAudioLLM/CosyVoice2-0.5B"):
         """
         生成语音并保存到文件
         参数:
@@ -197,6 +199,7 @@ class SiliconFlowAPI:
             voice_uri: 语音URI或名称
             output_path: 输出文件路径
             speed: 语音速度，默认1.0
+            gain: 增益，默认0, 范围-10 到 10
             sample_rate: 采样率，默认44100
             stream: 是否使用流式模式，适合长文本
             model: 语音模型，默认为 CosyVoice2-0.5B
@@ -214,6 +217,7 @@ class SiliconFlowAPI:
             text=text,
             voice=voice_uri,
             speed=speed,
+            gain=gain,
             sample_rate=sample_rate,
             output_format=output_format,
             stream=stream,

@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 
 
 def generate_speech(text, voice_uri, output_file, model="FunAudioLLM/CosyVoice2-0.5B", 
-                    response_format="mp3", sample_rate=32000, speed=1.0, gain=0):
+                    response_format="mp3", sample_rate=32000, speed=1.0, gain=-2):
     """
     使用SiliconFlow API生成语音并保存到文件
     
@@ -28,7 +28,7 @@ def generate_speech(text, voice_uri, output_file, model="FunAudioLLM/CosyVoice2-
         response_format (str): 输出音频格式，默认为mp3
         sample_rate (int): 采样率，默认为32000
         speed (float): 语速，默认为1.0
-        gain (int): 增益，默认为0
+        gain (int): 增益，默认为-2 , 范围-10 到 10
     
     返回:
         bool: 成功返回True，失败返回False
@@ -47,8 +47,8 @@ def generate_speech(text, voice_uri, output_file, model="FunAudioLLM/CosyVoice2-
         "Content-Type": "application/json"
     }
     
-    # 将文本中的空格替换为%20，保持与shell脚本一致
-    text = text.replace(' ', '%20')
+    # # 将文本中的空格替换为%20，保持与shell脚本一致
+    # text = text.replace(' ', '%20')
     
     payload = {
         "model": model,

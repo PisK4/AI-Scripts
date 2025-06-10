@@ -291,7 +291,15 @@ def show_step_3(voice_options):
             format="%.1f",
             help="1.0 为正常语速，小于1.0变慢，大于1.0变快"
         )
-    
+        # 增益调整
+        gain = st.slider(
+            "增益",
+            min_value=-10,
+            max_value=10,
+            value=0,
+            step=1,
+            help="增益越大，音量越大"
+        )
     # 输出格式选择
     output_format = st.radio(
         "输出格式",
@@ -340,6 +348,7 @@ def show_step_3(voice_options):
                     voice_uri=selected_voice,
                     output_path=str(output_path),
                     speed=speed,
+                    gain=gain,
                     sample_rate=44100,  # 使用固定采样率
                     stream=use_stream
                 )

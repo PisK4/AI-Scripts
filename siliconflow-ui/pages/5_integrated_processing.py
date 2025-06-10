@@ -322,7 +322,7 @@ def show_step_3(voice_options):
     # 语音参数设置
     st.markdown("### 语音参数")
     
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     
     with col1:
         speed = st.slider(
@@ -339,6 +339,16 @@ def show_step_3(voice_options):
             "输出格式",
             ["mp3", "wav", "ogg"],
             help="选择输出音频的格式"
+        )
+
+    with col3:
+        gain = st.slider(
+            "增益",
+            min_value=-10,
+            max_value=10,
+            value=0,
+            step=1,
+            help="增益越大，音量越大"
         )
     
     # 生成按钮

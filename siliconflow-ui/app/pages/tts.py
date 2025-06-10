@@ -143,9 +143,19 @@ def show_page():
             format="%.1f",
             help="1.0 为正常语速，小于1.0变慢，大于1.0变快"
         )
+        # 增益调整
+        gain = st.slider(
+            "增益",
+            min_value=-10,
+            max_value=10,
+            value=st.session_state.tts_state.get("gain", 0),
+            step=1,
+            help="增益越大，音量越大"
+        )
         
         # 更新会话状态
         st.session_state.tts_state["speed"] = speed
+        st.session_state.tts_state["gain"] = gain
         
         # 采样率选择
         sample_rate = st.select_slider(
@@ -204,6 +214,7 @@ def show_page():
                     voice_uri=selected_voice,
                     output_path=str(output_path),
                     speed=speed,
+                    gain=gain,
                     sample_rate=sample_rate,
                     stream=use_stream
                 )

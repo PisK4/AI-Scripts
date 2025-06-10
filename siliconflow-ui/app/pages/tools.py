@@ -748,7 +748,7 @@ def show_audio_converter():
                     value=5,
                     help="0表示最高压缩率(较小文件)，10表示最佳质量(较大文件)"
                 )
-        
+        # 生成语音失败: 生成语音失败: 400 - {"code":20015,"message":"sample rate of wav/pcm should be 8000hz, 16000hz, 24000hz, 32000hz or 44100hz","data":null}
         # 采样率选择
         sample_rate = st.select_slider(
             "采样率",
